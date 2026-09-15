@@ -197,7 +197,22 @@ Parsing should be:
 - case-insensitive
 - whitespace tolerant
 - safe against quoted email text/signatures
-- limited to the first valid command found in the new reply content
+- handling multiple commands in one email reply separated by new lines or commas, e.g.
+  C 42, P 200
+
+  or
+
+  C 42
+  P 200
+
+Multiple-command rules:
+
+- Process every command in one reply atomically: either all commands are valid and recorded, or none are recorded.
+- If any command is invalid or ambiguous, explain the error and ask the user to resend the complete corrected reply.
+- Commas separate commands, never thousands or decimal digits. Use `P 1200.00`, not `P 1,200` or `P 12,50`.
+- `N` must appear alone; reject it when combined with payment or charge commands.
+- Amounts must be positive, with no more than two decimal places. Reject negative, zero, non-finite, and out-of-range amounts rather than rounding them.
+- Preserve command order and give transactions from the same reply a shared inbound-message reference.
 
 Optional later syntax may support:
 
@@ -235,6 +250,7 @@ EmailTransport
 The first implementation may use standard SMTP for sending and IMAP for receiving.
 
 Do not tightly couple the application to one email provider.
+
 
 ## Email Check-In Example
 
@@ -281,13 +297,13 @@ No message queue is needed.
 
 When a reply is received:
 
-1. identify the matching check-in
+1. identify the matching check-in and verify the sender matches its configured recipient
 2. ignore already-processed messages
 3. extract only the newly written reply text
-4. parse the command
-5. validate the amount
-6. record the transaction
-7. mark the inbound message as processed
+4. parse all commands in the new reply text
+5. validate every command and amount
+6. record all transactions and mark the inbound message as processed in one database transaction
+7. persist the outcome for the inbound message; invalid replies create no financial transactions
 8. update the display through normal database polling
 9. optionally send a short confirmation email
 
@@ -319,6 +335,10 @@ or N
 ```
 
 Never create a financial transaction from ambiguous text.
+
+Accept only replies from the configured check-in recipient and matched to a persisted check-in. Ignore unmatched messages and unexpected senders without sending automatic error replies. Use encrypted, authenticated SMTP/IMAP connections and keep credentials outside source control.
+
+A check-in can receive multiple distinct replies. Each inbound message is processed at most once; a later, distinct reply is a new update even if its text is identical. Deduplicate delivery by message identity, not command text. A failed confirmation send must never cause transactions to be applied again.
 
 Do not process the same email twice.
 
@@ -364,6 +384,13 @@ Tier 0 is complete when:
 13. `/display` shows the current total
 14. display reflects email-created transactions automatically
 15. manual web entry remains available as fallback
+16. a valid multi-command reply records every command exactly once
+17. an invalid command anywhere in a reply prevents the entire reply from changing the balance
+18. `N` mixed with transactions is rejected
+19. separate replies to one check-in are accepted, while redelivery is ignored after restart
+20. unexpected senders and unmatched check-ins cause no transactions
+21. overpayments and debt above the starting balance follow the money/progress rules below
+22. daily scheduling does not send duplicate check-ins after restart
 
 ## Stop Condition
 
@@ -430,7 +457,7 @@ What happened?
 
 Tier 1 is complete when:
 
-1. a non-technical user can set it up locally
+1. a user can follow documented source-based setup instructions; routine configuration requires no source edits
 2. transaction mistakes can be corrected
 3. balance always recalculates correctly
 4. trend chart reflects transaction history
@@ -450,6 +477,12 @@ At the end of Tier 1, the software should already be useful even without the mon
 Make the product feel fun, motivating, and memorable.
 
 This is the tier where Debt Monster becomes more than a CRUD application.
+
+As part of this tier, make the application installable by a nontechnical user without repository cloning or manually installing Python.
+
+Initial packaged desktop target: macOS. Provide a downloadable installer or self-contained application bundle, normal Finder/Applications launching, and guided first-run configuration. Routine use must not require a terminal. Document supported macOS versions and processor architectures with the release. Keep source-based operation documented for Linux and Windows; packaged installers for those platforms can follow later.
+
+Installation must preserve existing user data. Email still requires the user to configure a supported mailbox; do not promise zero configuration.
 
 ## Required Features
 
@@ -582,6 +615,7 @@ Tier 2 is complete when:
 3. progress is visually obvious
 4. the application no longer feels like finance software
 5. debt increases are handled neutrally
+6. a fresh macOS installation can download, install, launch, and configure the application without cloning the repository or installing Python manually
 
 ---
 
@@ -675,7 +709,7 @@ Tier 3 is complete when:
 3. savings deposits increase balance
 4. withdrawals reduce balance
 5. savings history persists
-6. savings chart moves upward over time
+6. savings chart reflects deposits and withdrawals accurately, including downward movement
 7. application remains useful indefinitely after debt payoff
 
 ---
@@ -724,7 +758,14 @@ Raspberry Pi
   `debtmonster.local`
 - data survives reboot
 - clean shutdown behavior
-- no internet required for normal use
+- manual entry, calculations, and display work without internet
+- email check-ins and replies require internet access and remain supported on the device
+- provide backup export on the PC and restore/import on the Pi for a one-time transfer
+- transfer starting balances, transactions, modes, and applicable display settings; configure mailbox credentials separately on the destination
+- validate the backup before replacing destination data, back up existing destination data first, and show a confirmation before replacement
+- document the Pi as the active instance after transfer; disable email processing on the PC to prevent two instances processing the same mailbox
+- do not introduce continuous PC/Pi synchronization
+
 
 ## Suggested File Separation
 
@@ -766,6 +807,8 @@ Tier 4 is complete when:
 3. data remains intact
 4. user can enter transactions from another device on the local network
 5. no keyboard or mouse is required for normal operation
+6. a PC backup restores on the Pi with identical balances and transaction history
+7. the transferred installation processes email updates without the old PC instance continuing to poll
 
 ---
 
@@ -1046,6 +1089,20 @@ Starting Savings
 
 ---
 
+## Balance and Progress Rules
+
+- Starting debt and starting savings must be nonnegative integer cents. Savings goal, when configured, must be positive.
+- Payment/charge/deposit/withdrawal amounts are positive integer cents. Adjustments are signed integer cents; document their effect explicitly.
+- Preserve the full ledger when a payment exceeds remaining debt. The derived debt balance may be negative; display debt remaining as $0 and show the excess separately as a tracked credit. Do not automatically transfer it to savings.
+- Trigger debt-free celebration on a transition from positive debt to zero or below, not on every poll. A zero starting balance is already debt-free and must not cause division by zero.
+- Define net debt reduction as starting debt minus current derived debt. Distinguish this from total payments: charges can reduce or reverse progress.
+- For positive starting debt, progress is net reduction divided by starting debt, clamped to 0–100% for the visual bar. If debt exceeds its starting balance, show the increase neutrally and a 0% bar. Display credit separately rather than more than 100% completion.
+- For zero starting debt, omit percentage progress and show the balance/state directly.
+- Savings progress is current savings divided by the positive savings goal, clamped to 0–100% for the bar. Without a goal, omit the percentage/bar. Preserve and clearly display negative savings or amounts above the goal rather than discarding ledger values.
+- Switching to savings creates a separate starting savings balance supplied by the user. Preserve debt history; do not infer savings from debt credit.
+
+---
+
 # 9. Suggested Technology Stack
 
 Backend:
@@ -1187,11 +1244,14 @@ every:
 5 seconds
 ```
 
-If the balance changes:
+Return a monotonically increasing event cursor/revision alongside status. When polling, retrieve every display event since the last cursor rather than only the latest transaction.
 
-1. retrieve latest transaction
-2. update display
-3. trigger animation if appropriate
+1. update the balance from current derived status
+2. consume all new events in order, including payment/charge pairs whose net balance change is zero
+3. trigger the appropriate celebration once per event, with a bounded queue or combined payment celebration for bursts
+4. persist the display consumer cursor so refresh/restart does not replay old celebrations
+
+Editing or deleting a transaction produces a correction event and refreshed totals; it must not replay the original payment celebration. Initial display startup shows current status without animating historical transactions. Event tracking is introduced when Tier 2 adds animations; Tier 0 only needs reliable balance polling.
 
 ---
 
@@ -1216,6 +1276,7 @@ Settings:
 ```text
 email_updates_enabled
 checkin_time
+checkin_timezone
 recipient_email
 email_transport
 confirmation_email_enabled
@@ -1238,6 +1299,10 @@ small in-process scheduler
 ```
 
 Choose the simplest reliable option for the platform.
+
+Persist a daily check-in record keyed by local date and configuration/recipient so restarts or multiple scheduler workers do not send duplicate daily check-ins. Configure an IANA time zone. For daylight-saving transitions, send once at the first valid time at or after the scheduled time; do not send twice when a local time repeats. After downtime, send at most today's overdue check-in, never a backlog of prior days. Tier 0 can use a documented default time/time zone; Tier 1 provides controls.
+
+Persist send state and reuse the same check-in/message identifier on retries. If SMTP delivery outcome is uncertain, a retry may deliver another copy of the same check-in; document this transport limitation rather than claiming exactly-once email delivery. Reply transactions must still remain idempotent.
 
 ## Sending
 
@@ -1278,9 +1343,22 @@ checkin_id
 sent_at
 recipient
 message_id
-processed_reply_id
 status
 ```
+
+Store inbound replies in a separate table, with a many-to-one relationship to check-ins:
+
+```text
+inbound_id (unique stable identity)
+checkin_id
+received_at
+sender
+processing_status
+processed_at
+error_code
+```
+
+Link each created transaction to its inbound reply. Avoid retaining entire mailbox messages unnecessarily.
 
 ## Idempotency
 
@@ -1294,7 +1372,9 @@ Store a stable inbound identifier such as:
 Message-ID
 ```
 
-or another provider-returned immutable identifier.
+or another provider-returned immutable identifier. For IMAP, scope message UIDs to the account, mailbox, and UIDVALIDITY; do not assume a bare UID is globally unique. Define fallback handling for missing Message-ID and enforce uniqueness in SQLite.
+
+Record valid reply transactions and their processing outcome atomically. Mark invalid messages as rejected so polling does not repeatedly send the same error. Sending confirmations happens after the database commit.
 
 ## Parsing
 
@@ -1354,13 +1434,17 @@ No account
 No bank credentials
 ```
 
-Internet access is optional and primarily intended for software update checks.
+Internet access is optional for manual use. It is required for email check-ins/replies and software update checks/downloads.
+
+Email providers transport and may retain command amounts and any enabled balance confirmations. Local-first means Debt Monster does not upload the financial database or operate a cloud financial service; it does not mean email content never leaves the device.
 
 ---
 
 # 15. Security
 
-- local network only by default
+- bind to localhost for PC use by default; enable local-network access explicitly for the Pi or household access
+- no account/login system in the initial product; document that enabled LAN access trusts devices on that network
+- protect state-changing web requests against CSRF and reject unexpected origins/hosts
 - never expose the app publicly by default
 - sanitize form input
 - validate transaction amounts
@@ -1399,6 +1483,8 @@ automatic database backup
 ---
 
 # 17. Tests
+Add and run meaningful unit and integration tests for the current tier before declaring it complete. Do not implement later-tier features solely to satisfy the full list below. At completion of the software tiers, run the full applicable regression suite and document any hardware or live-mailbox checks that remain unverified.
+
 
 Minimum tests:
 
@@ -1413,13 +1499,23 @@ Minimum tests:
 - quoted reply/signature text does not corrupt parsing
 - payment lowers debt
 - charge increases debt
+- multiple commands separated by commas and newlines
+- multi-command replies commit all-or-nothing
+- `N` mixed with financial commands is rejected
+- separate replies to one check-in are accepted
+- deduplication persists across restarts
+- unexpected sender/unmatched check-in creates no transaction
+- scheduling across restart and daylight-saving changes
+- zero starting debt, debt growth, and overpayment/credit handling
+- display processes offsetting payment/charge events without replay after refresh
 - multiple transactions
 - edit recalculates
 - delete recalculates
 - debt-free state
 - savings deposit
 - savings withdrawal
-- backup/restore
+- backup/restore, including invalid-backup rejection
+- PC-to-Pi transfer preserves balances/history and leaves one active email processor
 - migration preserves transactions
 
 ---
@@ -1433,14 +1529,13 @@ When building this application:
 3. Do not replace email reply input with a web-link-only workflow.
 4. Keep the manual web form as a fallback/admin path.
 5. Do not implement later tiers early.
-3. Prioritize working software over architecture.
-4. Prefer simple implementation.
-5. Keep dependencies minimal.
-6. Do not add features outside the scope.
-7. Keep all user financial data local.
-8. Never use floating-point values for money.
-9. Make the browser version work before Pi deployment.
-10. Test each tier before proceeding.
+6. Prefer simple implementation.
+7. Keep dependencies minimal.
+8. Do not add features outside the scope.
+9. Keep all user financial data local.
+10. Never use floating-point values for money.
+11. Make the browser version work before Pi deployment.
+12. Test each tier before proceeding.
 
 If a design choice creates significant complexity, choose the simpler alternative.
 
@@ -1562,6 +1657,10 @@ The customer is primarily paying for:
 - emotional experience
 
 Do not assume a SaaS model is necessary.
+
+Whether we build the display or not the application should always be available for users
+to download and run locally on their computer.
+
 
 ---
 
