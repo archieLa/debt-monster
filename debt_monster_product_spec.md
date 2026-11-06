@@ -1,1777 +1,220 @@
-# Debt Monster — Product & Tiered Build Specification
+# Debt Monster — Personal Build Specification
 
-## 1. Product Summary
+## Purpose and scope
 
-**Debt Monster** is a simple, local-first motivational tool that helps a household visually track debt shrinking over time and, once debt reaches zero, transition into watching savings grow.
+Build a small, local-first tool for my household: **watch debt disappear, then watch savings grow**. Get the daily loop working quickly on a computer, add a friendly monster and useful charts, then put it on a Raspberry Pi if useful.
 
-It is **not financial software**.
+The primary interaction is email: daily check-in → direct reply → local transaction → display updates. A local web form provides fallback entry and corrections. Email is configurable but is a core Tier 0 implementation requirement.
 
-It does not connect to banks, credit cards, Plaid, investment accounts, or external financial institutions.
+Keep this a personal project. Success means I use it regularly with my own data. No business launch or public distribution work is needed.
 
-The user reports only the changes that matter:
+In scope: debt, savings, their transition, daily email replies, SQLite history, charts, playful animations, and an optional Pi kiosk. Out of scope: bank connections, automated imports, budgeting, investment tracking, generic goals, cloud accounts, telemetry, multi-user permissions, mobile apps, desktop installers, custom hardware, and continuous computer/Pi synchronization.
 
-- debt payment
-- new credit-card charge
-- savings deposit
-- savings withdrawal
+## Build approach and coding-agent instructions
 
-The preferred interaction is **email-first**.
+There are exactly four implementation tiers. Complete and verify the requested tier before proceeding. Unless asked otherwise, **build Tier 0 only** and report its validation results and remaining limitations.
 
-Each morning, if email updates are enabled, the system sends a short check-in email. The user can reply directly to that email with a compact command such as:
+- Use Python, Flask, SQLite, HTML/CSS, and vanilla JavaScript. A small chart library is acceptable; serve display assets locally so offline operation works.
+- Prefer a single application and one lightweight email worker/scheduler. Avoid microservices, queues, public webhooks, SPA frameworks, and provider-specific architecture.
+- Email replies must directly record changes; a link to a web form does not satisfy the core workflow.
+- Use one shared validation/calculation path for email and manual entry.
+- Store money as integer cents. Never use floating point for financial calculations.
+- Keep database and local configuration outside replaceable application files. Never commit real financial data or mailbox credentials.
+- Use source-based setup and a short README. Routine settings must not require source edits. Do not build installers or a general deployment platform.
+- Test meaningful behavior for the current tier. Do not implement later features to satisfy future tests.
+- Report automated checks separately from live mailbox, visual, and Pi checks; do not claim checks that were not performed.
+- Keep the browser build usable before starting Pi work. Add complexity only when needed for this household's workflow.
 
-```text
-P 500
-```
-
-for a $500 payment,
-
-```text
-C 42.18
-```
-
-for a $42.18 new charge, or:
-
-```text
-N
-```
-
-for no change.
-
-The application parses the reply, records the transaction locally, and updates the display automatically.
-
-A local web form remains available as a fallback and for corrections/admin tasks.
-
-The main experience is a small always-on display that makes financial progress visible and emotionally rewarding.
-
-The product should remain focused strictly on:
-
-1. **Debt**
-2. **Savings**
-3. **Debt-to-savings transition**
-
-Do not expand the application into generic goal tracking.
-
----
-
-# 2. Core Product Idea
-
-The product promise is:
-
-> Watch debt disappear. Then watch savings grow.
-
-The display should feel more like a small household object than a finance dashboard.
-
-The user should be able to understand their progress from across the room.
-
-When debt decreases, a playful monster eats part of the debt.
-
-When debt reaches zero, the user gets a major celebration and can switch into Savings Mode.
-
----
-
-# 3. Product Philosophy
-
-The application should feel:
-
-- simple
-- friendly
-- visual
-- motivating
-- local-first
-- private
-- low-friction
-- non-judgmental
-- slightly playful
-- polished enough to become a physical product
-
-Avoid anything that makes it feel like budgeting software, accounting software, or online banking.
-
----
-
-# 4. Explicit Non-Goals
-
-Do NOT build the following for the initial product:
-
-- Plaid integration
-- bank integration
-- credit-card API integration
-- account aggregation
-- automated transaction import
-- budgeting categories
-- expense categorization
-- receipt scanning
-- OCR
-- bill payment
-- money transfers
-- credit-score features
-- tax features
-- investment tracking
-- cloud account requirement
-- user authentication
-- subscription billing
-- multi-user permissions
-- native mobile app
-- generic goal tracking
-- vacation goals
-- fitness goals
-- habit tracking
-- arbitrary progress trackers
-
----
-
-# 5. TIERED BUILD STRATEGY
-
-This project MUST be built in tiers.
-
-The coding agent should complete and validate each tier before moving to the next.
-
-Do not build later-tier features prematurely.
-
-The objective is to get a usable prototype very quickly, then add polish only after the core experience works.
-
----
-
-# TIER 0 — Proof of Concept
-
-## Goal
-
-Prove the complete central loop:
-
-> Morning email → user replies → transaction is recorded → balance changes → display updates.
-
-This is the defining interaction of the product and must be present from the beginning.
-
-## Required Features
-
-- local Flask application
-- SQLite database
-- starting debt setup
-- current debt calculation
-- one simple `/display` page
-- basic transaction history
-- configurable email integration
-- send a test/check-in email
-- receive and parse email replies
-- record payment from email reply
-- record charge from email reply
-- handle `N` / no-change reply
-- browser refresh or polling
-- manual web entry as fallback
-
-## Supported Reply Commands
-
-Minimum syntax:
-
-```text
-P 500
-```
-
-means:
-
-```text
-payment = $500.00
-```
-
-```text
-C 42.18
-```
-
-means:
-
-```text
-charge = $42.18
-```
-
-```text
-N
-```
-
-means:
-
-```text
-no financial change
-```
-
-Parsing should be:
-
-- case-insensitive
-- whitespace tolerant
-- safe against quoted email text/signatures
-- handling multiple commands in one email reply separated by new lines or commas, e.g.
-  C 42, P 200
-
-  or
-
-  C 42
-  P 200
-
-Multiple-command rules:
-
-- Process every command in one reply atomically: either all commands are valid and recorded, or none are recorded.
-- If any command is invalid or ambiguous, explain the error and ask the user to resend the complete corrected reply.
-- Commas separate commands, never thousands or decimal digits. Use `P 1200.00`, not `P 1,200` or `P 12,50`.
-- `N` must appear alone; reject it when combined with payment or charge commands.
-- Amounts must be positive, with no more than two decimal places. Reject negative, zero, non-finite, and out-of-range amounts rather than rounding them.
-- Preserve command order and give transactions from the same reply a shared inbound-message reference.
-
-Optional later syntax may support:
-
-```text
-PAY 500
-PAYMENT 500
-CHARGE 42.18
-```
-
-but the short commands above are sufficient for the first implementation.
-
-## Email Configuration
-
-Email updates must be configurable.
-
-First-run setup should allow:
-
-```text
-Enable daily email check-in?
-[ Yes ] [ No ]
-```
-
-If enabled, collect the minimum configuration required by the selected email transport.
-
-The email feature must be isolated behind a small interface so the transport can later change without changing transaction logic.
-
-Conceptually:
-
-```text
-EmailTransport
-    send_checkin()
-    fetch_replies()
-```
-
-The first implementation may use standard SMTP for sending and IMAP for receiving.
-
-Do not tightly couple the application to one email provider.
-
-
-## Email Check-In Example
-
-Subject:
-
-```text
-Debt Monster Check-In [DM-20260828-7F3A]
-```
-
-Body:
-
-```text
-Good morning 🐲
-
-Any debt changes since yesterday?
-
-Reply with:
-
-P 500      payment of $500
-C 42.18    charge of $42.18
-N          no change
-```
-
-Each check-in should contain a unique message/check-in identifier.
-
-The identifier is used to:
-
-- correlate the reply
-- avoid processing the same reply twice
-- preserve an audit trail
-- make parsing safer
-
-## Reply Processing
-
-A lightweight background process should periodically check for replies.
-
-For MVP:
-
-```text
-poll every 1–5 minutes
-```
-
-No message queue is needed.
-
-When a reply is received:
-
-1. identify the matching check-in and verify the sender matches its configured recipient
-2. ignore already-processed messages
-3. extract only the newly written reply text
-4. parse all commands in the new reply text
-5. validate every command and amount
-6. record all transactions and mark the inbound message as processed in one database transaction
-7. persist the outcome for the inbound message; invalid replies create no financial transactions
-8. update the display through normal database polling
-9. optionally send a short confirmation email
-
-Example confirmation:
-
-```text
-CHOMP! 🐲
-
-$500 payment recorded.
-
-Debt remaining: $23,885
-```
-
-Confirmation email should be configurable and may be disabled by default if unnecessary.
-
-## Safety / Error Handling
-
-If the reply cannot be parsed, do not guess.
-
-Example:
-
-```text
-I couldn't understand that update.
-
-Please reply with:
-P 500
-C 42.18
-or N
-```
-
-Never create a financial transaction from ambiguous text.
-
-Accept only replies from the configured check-in recipient and matched to a persisted check-in. Ignore unmatched messages and unexpected senders without sending automatic error replies. Use encrypted, authenticated SMTP/IMAP connections and keep credentials outside source control.
-
-A check-in can receive multiple distinct replies. Each inbound message is processed at most once; a later, distinct reply is a new update even if its text is identical. Deduplicate delivery by message identity, not command text. A failed confirmation send must never cause transactions to be applied again.
-
-Do not process the same email twice.
-
-## Display Requirements
-
-Only one display screen is required at this tier:
-
-```text
-DEBT MONSTER
-
-$24,385
-REMAINING
-
-$6,865 PAID OFF
-```
-
-No animation is required yet.
-
-No rotating views.
-
-No savings mode.
-
-No Raspberry Pi setup.
-
-No software-update mechanism.
-
-## Acceptance Criteria
-
-Tier 0 is complete when:
-
-1. application launches locally
-2. user enters starting debt
-3. email check-in can be enabled or disabled
-4. system sends a check-in email when enabled
-5. replying `P 500` creates a $500 payment
-6. replying `C 42.18` creates a $42.18 charge
-7. replying `N` creates no financial transaction
-8. duplicate email replies are not processed twice
-9. malformed replies do not create transactions
-10. payment reduces debt correctly
-11. charge increases debt correctly
-12. values persist after restart
-13. `/display` shows the current total
-14. display reflects email-created transactions automatically
-15. manual web entry remains available as fallback
-16. a valid multi-command reply records every command exactly once
-17. an invalid command anywhere in a reply prevents the entire reply from changing the balance
-18. `N` mixed with transactions is rejected
-19. separate replies to one check-in are accepted, while redelivery is ignored after restart
-20. unexpected senders and unmatched check-ins cause no transactions
-21. overpayments and debt above the starting balance follow the money/progress rules below
-22. daily scheduling does not send duplicate check-ins after restart
-
-## Stop Condition
-
-Do not continue if email parsing, transaction calculations, persistence, or duplicate prevention are unreliable.
-
-# TIER 1 — Usable Local Product
-
-## Goal
-
-Turn the proof of concept into something a household could actually use every day on a PC or browser.
-
-## Required Features
-
-Everything from Tier 0 plus:
-
-- polished first-run setup page
-- configurable daily email time
-- configurable recipient email address
-- enable/disable email check-ins at any time
-- email integration status/test screen
-- simple payment form
-- simple charge form
-- optional transaction note
-- edit transaction
-- delete transaction
-- automatic recalculation
-- progress bar
-- amount paid off
-- percentage complete
-- basic debt trend chart
-- CSV export
-- JSON backup/export
-- clean responsive interface
-
-## Primary Display
-
-Example:
-
-```text
-        DEBT MONSTER
-
-          $24,385
-          REMAINING
-
-       $6,865 EATEN
-      21.9% COMPLETE
-
-██████████████░░░░░░░░░░
-```
-
-## Update Form
-
-Debt mode:
-
-```text
-What happened?
-
-[ Made a Payment ]
-[ Added a Charge ]
-[ Nothing ]
-```
-
-## Acceptance Criteria
-
-Tier 1 is complete when:
-
-1. a user can follow documented source-based setup instructions; routine configuration requires no source edits
-2. transaction mistakes can be corrected
-3. balance always recalculates correctly
-4. trend chart reflects transaction history
-5. data can be backed up
-6. user does not need to edit source code
-
-## Stop Condition
-
-At the end of Tier 1, the software should already be useful even without the monster animations or Raspberry Pi hardware.
-
----
-
-# TIER 2 — Emotional / Visual Experience
-
-## Goal
-
-Make the product feel fun, motivating, and memorable.
-
-This is the tier where Debt Monster becomes more than a CRUD application.
-
-As part of this tier, make the application installable by a nontechnical user without repository cloning or manually installing Python.
-
-Initial packaged desktop target: macOS. Provide a downloadable installer or self-contained application bundle, normal Finder/Applications launching, and guided first-run configuration. Routine use must not require a terminal. Document supported macOS versions and processor architectures with the release. Keep source-based operation documented for Linux and Windows; packaged installers for those platforms can follow later.
-
-Installation must preserve existing user data. Email still requires the user to configure a supported mailbox; do not promise zero configuration.
-
-## Required Features
-
-Everything from Tier 1 plus:
-
-- Debt Monster visual character
-- payment celebration
-- "CHOMP" animation
-- milestone celebrations
-- rotating display views
-- monthly progress view
-- better typography and spacing
-- polished kiosk-style screen
-- neutral behavior when debt increases
-
-## Payment Celebration
-
-When a payment is recorded:
-
-```text
-        🐲
-
-      CHOMP!
-
-      -$500
-
-Debt remaining
-
-     $23,885
-```
-
-Animation duration:
-
-```text
-5–10 seconds
-```
-
-Possible effects:
-
-- monster chewing
-- chunk disappearing
-- count-down animation
-- progress bar movement
-- subtle particles
-
-Do not overbuild the animation system.
-
-CSS and lightweight JavaScript are sufficient.
-
-## Charge Behavior
-
-If debt increases:
-
-```text
-+$42.18 added
-
-Current debt:
-$24,427.18
-```
-
-Do not shame the user.
-
-Avoid:
-
-- angry monster
-- failure language
-- red warning screens
-- guilt messages
-
-## Milestones
-
-Trigger celebrations at:
-
-```text
-10%
-25%
-50%
-75%
-90%
-100%
-```
-
-Optional dollar milestones:
-
-```text
-$1,000 paid off
-$5,000 paid off
-$10,000 paid off
-```
-
-## Rotating Views
-
-Recommended:
-
-### View 1 — Current Debt
-
-```text
-$24,385 remaining
-```
-
-### View 2 — Trend
-
-Simple line chart.
-
-### View 3 — This Month
-
-```text
-THIS MONTH
-
-$1,850
-EATEN
-```
-
-### View 4 — Monster
-
-```text
-🐲
-
-Still hungry.
-
-$24,385 left to eat.
-```
-
-## Acceptance Criteria
-
-Tier 2 is complete when:
-
-1. making a payment feels satisfying
-2. the display is readable from several feet away
-3. progress is visually obvious
-4. the application no longer feels like finance software
-5. debt increases are handled neutrally
-6. a fresh macOS installation can download, install, launch, and configure the application without cloning the repository or installing Python manually
-
----
-
-# TIER 3 — Debt-Free + Savings Mode
-
-## Goal
-
-Make the product remain useful after debt reaches zero.
-
-This tier creates the complete Debt → Savings lifecycle.
-
-## Debt-Free Trigger
-
-When:
-
-```text
-current_debt <= 0
-```
-
-show a major celebration.
-
-Example:
-
-```text
-        🐲 🎉
-
-   THE MONSTER
-   ATE IT ALL.
-
-      $0 DEBT
-
-YOU DID IT.
-```
-
-## Transition Screen
-
-After the celebration:
-
-```text
-Debt defeated.
-
-Ready to start building?
-
-[ Start Saving ]
-[ Stay Here ]
-```
-
-## Savings Mode
-
-Savings mode should support:
-
-- starting savings balance
-- deposit
-- withdrawal
-- savings goal amount
-- progress bar
-- upward trend chart
-- milestone celebrations
-
-Example:
-
-```text
-        SAVINGS MODE
-
-            🌱
-
-          $8,420
-
-        SAVED SO FAR
-
-       Goal: $15,000
-
-█████████████░░░░░░░░░░░
-```
-
-## Savings Calculation
-
-```text
-Current Savings =
-Starting Savings
-+ Deposits
-- Withdrawals
-```
-
-## Acceptance Criteria
-
-Tier 3 is complete when:
-
-1. debt reaching zero triggers celebration
-2. user can switch into Savings Mode
-3. savings deposits increase balance
-4. withdrawals reduce balance
-5. savings history persists
-6. savings chart reflects deposits and withdrawals accurately, including downward movement
-7. application remains useful indefinitely after debt payoff
-
----
-
-# TIER 4 — Raspberry Pi Appliance
-
-## Goal
-
-Turn the software into a dedicated physical household display.
-
-Do not start this tier until the browser version feels good.
-
-## Recommended Initial Hardware
-
-Preferred first option:
-
-```text
-Raspberry Pi Zero 2 W
-```
-
-with a small HDMI or DSI display.
-
-Alternative low-cost hardware can be evaluated later.
-
-## Appliance Architecture
-
-```text
-Raspberry Pi
-     │
-     ├── Flask
-     ├── SQLite
-     └── Chromium kiosk
-           │
-           ▼
-     localhost/display
-```
-
-## Requirements
-
-- application starts on boot
-- browser starts automatically
-- kiosk mode
-- `/display` opens automatically
-- local network access
-- optional mDNS:
-  `debtmonster.local`
-- data survives reboot
-- clean shutdown behavior
-- manual entry, calculations, and display work without internet
-- email check-ins and replies require internet access and remain supported on the device
-- provide backup export on the PC and restore/import on the Pi for a one-time transfer
-- transfer starting balances, transactions, modes, and applicable display settings; configure mailbox credentials separately on the destination
-- validate the backup before replacing destination data, back up existing destination data first, and show a confirmation before replacement
-- document the Pi as the active instance after transfer; disable email processing on the PC to prevent two instances processing the same mailbox
-- do not introduce continuous PC/Pi synchronization
-
-
-## Suggested File Separation
-
-Application:
-
-```text
-/opt/debtmonster/
-```
-
-User data:
-
-```text
-/var/lib/debtmonster/
-```
-
-Example:
-
-```text
-/opt/debtmonster/
-    app/
-    static/
-    templates/
-    VERSION
-
-/var/lib/debtmonster/
-    debtmonster.db
-    config.yaml
-    backups/
-```
-
-This separation is important for future software updates.
-
-## Acceptance Criteria
-
-Tier 4 is complete when:
-
-1. Pi boots directly into the display
-2. app survives restart
-3. data remains intact
-4. user can enter transactions from another device on the local network
-5. no keyboard or mouse is required for normal operation
-6. a PC backup restores on the Pi with identical balances and transaction history
-7. the transferred installation processes email updates without the old PC instance continuing to poll
-
----
-
-# TIER 5 — Software Update System
-
-## Goal
-
-Allow physical devices to receive new software versions without affecting user financial data.
-
-This tier should remain simple.
-
-Do NOT build a complex package-management platform.
-
-## Update Philosophy
-
-The device may connect to the internet to:
-
-- check for a new software version
-- download a release
-- install it locally
-
-User financial data must remain local.
-
-Do not upload:
-
-- transaction history
-- debt balance
-- savings balance
-- notes
-- financial data
-
-## Versioning
-
-Use semantic versioning:
-
-```text
-1.0.0
-1.1.0
-1.2.0
-2.0.0
-```
-
-Store current version in:
-
-```text
-/opt/debtmonster/VERSION
-```
-
-## Update Flow
-
-Future admin screen:
-
-```text
-Debt Monster
-Version 1.2.0
-
-Version 1.3.0 is available.
-
-What's new:
-• New display layout
-• Better monthly stats
-• Improved monster animation
-
-[ Install Update ]
-```
-
-Recommended update flow:
-
-1. check remote release metadata
-2. compare version
-3. user chooses Install
-4. backup database
-5. stop application
-6. download release
-7. replace software files
-8. run database migration if needed
-9. restart application
-10. validate startup
-11. rollback if validation fails
-
-## Important
-
-Do not automatically install updates by default.
-
-Prefer:
-
-```text
-Check → Notify → User chooses Install
-```
-
-## Database Migrations
-
-If the schema changes, use numbered migrations.
-
-Example:
-
-```text
-001_initial.sql
-002_add_mode.sql
-003_add_version_metadata.sql
-```
-
-Never delete or overwrite user financial history during an update.
-
-## Acceptance Criteria
-
-Tier 5 is complete when:
-
-1. device can identify its current software version
-2. device can determine whether an update exists
-3. user can trigger an update
-4. database is backed up first
-5. user data survives update
-6. failed update can rollback safely
-
----
-
-# TIER 6 — Commercial Product Polish
-
-## Goal
-
-Only after the software and physical prototype are proven, make the device sellable.
-
-This tier is not required for the first prototype.
-
-## Areas to Improve
+## Tier 0 — Core and email
 
-- enclosure design
-- reliable display mounting
-- power management
-- packaging
-- setup instructions
-- Wi-Fi onboarding
-- polished startup experience
-- manufacturing repeatability
-- product photography
-- Etsy listing
-- support documentation
+### Goal
 
-## Possible Physical Product
+Receive a morning email, reply `P 500`, and see debt decrease by $500 without opening the app.
 
-```text
-┌─────────────────────────────┐
-│                             │
-│        DEBT MONSTER         │
-│                             │
-│            🐲               │
-│                             │
-│          $24,385            │
-│          remaining          │
-│                             │
-│     ███████████░░░░░░       │
-│                             │
-└─────────────────────────────┘
-```
-
-Possible enclosure materials:
-
-- maple
-- oak
-- walnut
-- birch plywood
-
-Potential personalized options:
-
-- engraved family name
-- custom message
-- custom finish
-
-Do not optimize enclosure cost or custom electronics before validating interest.
-
----
-
-# 6. Data Model
-
-Use SQLite.
-
-## Settings
-
-Recommended fields:
-
-```text
-id
-key
-value
-```
-
-Possible settings:
-
-```text
-mode
-display_name
-currency
-starting_debt
-starting_savings
-savings_goal
-rotation_interval
-monster_enabled
-software_version
-```
-
-## Transactions
-
-Recommended fields:
-
-```text
-id
-timestamp
-date
-type
-amount_cents
-note
-mode
-```
-
-Supported debt types:
-
-```text
-payment
-charge
-adjustment
-```
-
-Supported savings types:
-
-```text
-deposit
-withdrawal
-adjustment
-```
-
----
-
-# 7. Money Representation
-
-Never use floating point for money.
-
-Use integer cents.
-
-Example:
-
-```text
-$500.00 = 50000
-```
-
----
-
-# 8. Derived Values
-
-Do not permanently store:
-
-- current debt
-- current savings
-- percentage complete
-- total amount paid off
-
-Calculate them from starting values and transaction history.
-
-Debt:
-
-```text
-Current Debt =
-Starting Debt
-+ Charges
-- Payments
-+ Adjustments
-```
-
-Savings:
-
-```text
-Current Savings =
-Starting Savings
-+ Deposits
-- Withdrawals
-+ Adjustments
-```
-
----
-
-## Balance and Progress Rules
-
-- Starting debt and starting savings must be nonnegative integer cents. Savings goal, when configured, must be positive.
-- Payment/charge/deposit/withdrawal amounts are positive integer cents. Adjustments are signed integer cents; document their effect explicitly.
-- Preserve the full ledger when a payment exceeds remaining debt. The derived debt balance may be negative; display debt remaining as $0 and show the excess separately as a tracked credit. Do not automatically transfer it to savings.
-- Trigger debt-free celebration on a transition from positive debt to zero or below, not on every poll. A zero starting balance is already debt-free and must not cause division by zero.
-- Define net debt reduction as starting debt minus current derived debt. Distinguish this from total payments: charges can reduce or reverse progress.
-- For positive starting debt, progress is net reduction divided by starting debt, clamped to 0–100% for the visual bar. If debt exceeds its starting balance, show the increase neutrally and a 0% bar. Display credit separately rather than more than 100% completion.
-- For zero starting debt, omit percentage progress and show the balance/state directly.
-- Savings progress is current savings divided by the positive savings goal, clamped to 0–100% for the bar. Without a goal, omit the percentage/bar. Preserve and clearly display negative savings or amounts above the goal rather than discarding ledger values.
-- Switching to savings creates a separate starting savings balance supplied by the user. Preserve debt history; do not infer savings from debt credit.
-
----
-
-# 9. Suggested Technology Stack
-
-Backend:
-
-```text
-Python
-Flask
-```
-
-Database:
-
-```text
-SQLite
-```
-
-Frontend:
-
-```text
-HTML
-CSS
-Vanilla JavaScript
-```
-
-Optional:
-
-```text
-Chart.js
-```
-
-Avoid React, Vue, Svelte, or other SPA frameworks unless a clear requirement appears later.
-
----
-
-# 10. Suggested Project Structure
-
-```text
-debt-monster/
-│
-├── app.py
-├── requirements.txt
-├── README.md
-├── LICENSE
-├── VERSION
-│
-├── data/
-│   └── debt_monster.db
-│
-├── templates/
-│   ├── display.html
-│   ├── update.html
-│   ├── payment.html
-│   ├── charge.html
-│   ├── savings.html
-│   ├── admin.html
-│   └── setup.html
-│
-├── static/
-│   ├── css/
-│   ├── js/
-│   └── assets/
-│       └── monster/
-│
-├── debtmonster/
-│   ├── database.py
-│   ├── calculations.py
-│   ├── models.py
-│   ├── routes.py
-│   └── migrations.py
-│
-├── scripts/
-│   ├── install.sh
-│   ├── run.sh
-│   ├── kiosk.sh
-│   └── update.sh
-│
-└── tests/
-```
-
-Keep it simpler than this if possible.
-
----
-
-# 11. API
-
-Minimum API:
-
-## GET /api/status
-
-Example:
-
-```json
-{
-  "mode": "debt",
-  "startingBalanceCents": 3125000,
-  "currentBalanceCents": 2438500,
-  "progress": 0.21968
-}
-```
-
-## GET /api/transactions
-
-Optional:
-
-```text
-?limit=100
-```
-
-## POST /api/transactions
-
-Example:
-
-```json
-{
-  "type": "payment",
-  "amountCents": 50000,
-  "note": "Visa"
-}
-```
-
-## PUT /api/transactions/:id
-
-## DELETE /api/transactions/:id
-
----
-
-# 12. Display Update Strategy
-
-Do not use WebSockets for early versions.
-
-Poll:
-
-```text
-GET /api/status
-```
-
-every:
-
-```text
-5 seconds
-```
-
-Return a monotonically increasing event cursor/revision alongside status. When polling, retrieve every display event since the last cursor rather than only the latest transaction.
-
-1. update the balance from current derived status
-2. consume all new events in order, including payment/charge pairs whose net balance change is zero
-3. trigger the appropriate celebration once per event, with a bounded queue or combined payment celebration for bursts
-4. persist the display consumer cursor so refresh/restart does not replay old celebrations
-
-Editing or deleting a transaction produces a correction event and refreshed totals; it must not replay the original payment celebration. Initial display startup shows current status without animating historical transactions. Event tracking is introduced when Tier 2 adds animations; Tier 0 only needs reliable balance polling.
-
----
-
-# 13. Email Check-In System
-
-Email is a **core interaction**, not an optional future reminder feature.
-
-The product should support two input paths:
-
-```text
-PRIMARY:
-Daily email → reply → automatic update
-
-FALLBACK:
-Local web form → manual update
-```
-
-## User Configuration
-
-Settings:
-
-```text
-email_updates_enabled
-checkin_time
-checkin_timezone
-recipient_email
-email_transport
-confirmation_email_enabled
-```
-
-A user must be able to disable daily emails without disabling the rest of the product.
-
-## Scheduling
-
-When enabled, send one check-in per day at the configured local time.
+### Required behavior
 
-The scheduler can remain simple.
+- Local application with first-run starting debt, current balance, basic transaction history, manual payment/charge entry, and `/display`.
+- SQLite persistence for settings, transactions, check-ins, and inbound processing outcomes.
+- Poll display status approximately every five seconds; no WebSockets needed.
+- Settings for enabling/disabling email, recipient, daily local time, IANA time zone, mailbox connection, and optional success confirmations. Include a test email and visible connection/error status.
+- SMTP sending and IMAP reply polling every 1–5 minutes behind a small transport interface. Use encrypted, authenticated connections; keep secrets in local environment/configuration outside source control.
+- Email failures leave manual entry and the local display usable. A restart must not lose financial changes or processing history.
 
-Suitable implementations include:
+### Reply contract
 
-```text
-APScheduler
-cron/systemd timer
-small in-process scheduler
-```
-
-Choose the simplest reliable option for the platform.
-
-Persist a daily check-in record keyed by local date and configuration/recipient so restarts or multiple scheduler workers do not send duplicate daily check-ins. Configure an IANA time zone. For daylight-saving transitions, send once at the first valid time at or after the scheduled time; do not send twice when a local time repeats. After downtime, send at most today's overdue check-in, never a backlog of prior days. Tier 0 can use a documented default time/time zone; Tier 1 provides controls.
-
-Persist send state and reuse the same check-in/message identifier on retries. If SMTP delivery outcome is uncertain, a retry may deliver another copy of the same check-in; document this transport limitation rather than claiming exactly-once email delivery. Reply transactions must still remain idempotent.
-
-## Sending
-
-Abstract sending behind an email transport.
-
-Initial implementation may use:
-
-```text
-SMTP
-```
-
-## Receiving
-
-Initial implementation may use:
-
-```text
-IMAP polling
-```
-
-Do not require a public webhook or public internet exposure for the local application.
-
-This is important to preserve the local-first architecture.
-
-## Correlation
-
-Every outgoing check-in must have a unique identifier.
-
-Example:
-
-```text
-[DM-20260828-7F3A]
-```
-
-Persist:
-
-```text
-checkin_id
-sent_at
-recipient
-message_id
-status
-```
-
-Store inbound replies in a separate table, with a many-to-one relationship to check-ins:
-
-```text
-inbound_id (unique stable identity)
-checkin_id
-received_at
-sender
-processing_status
-processed_at
-error_code
-```
-
-Link each created transaction to its inbound reply. Avoid retaining entire mailbox messages unnecessarily.
-
-## Idempotency
-
-Inbound email processing must be idempotent.
-
-The same inbound message must never create multiple transactions.
-
-Store a stable inbound identifier such as:
-
-```text
-Message-ID
-```
-
-or another provider-returned immutable identifier. For IMAP, scope message UIDs to the account, mailbox, and UIDVALIDITY; do not assume a bare UID is globally unique. Define fallback handling for missing Message-ID and enforce uniqueness in SQLite.
-
-Record valid reply transactions and their processing outcome atomically. Mark invalid messages as rejected so polling does not repeatedly send the same error. Sending confirmations happens after the database commit.
-
-## Parsing
-
-Supported debt commands:
-
-```text
-P 500
-C 42.18
-N
-```
-
-Supported savings commands once Savings Mode exists:
-
-```text
-D 500
-```
-
-or preferably a less ambiguous command:
-
-```text
-S 500
-```
-
-for savings deposit, and:
-
-```text
-W 100
-```
-
-for withdrawal.
-
-The exact savings syntax should be chosen once Savings Mode is implemented.
-
-Debt-mode parsing should ship first.
-
-## Local-First Boundary
-
-Email transport obviously uses the user's email provider, but the product must not create a Debt Monster cloud account or upload the financial database.
+Debt commands:
 
-Only the minimal content needed for the email interaction should transit through email.
-
-All calculations and persistent transaction history remain on the local device.
-
-# 14. Privacy
-
-Core principle:
-
-> Financial data stays on the device.
-
-Default:
-
-```text
-No cloud
-No telemetry
-No analytics
-No account
-No bank credentials
-```
-
-Internet access is optional for manual use. It is required for email check-ins/replies and software update checks/downloads.
-
-Email providers transport and may retain command amounts and any enabled balance confirmations. Local-first means Debt Monster does not upload the financial database or operate a cloud financial service; it does not mean email content never leaves the device.
-
----
-
-# 15. Security
-
-- bind to localhost for PC use by default; enable local-network access explicitly for the Pi or household access
-- no account/login system in the initial product; document that enabled LAN access trusts devices on that network
-- protect state-changing web requests against CSRF and reject unexpected origins/hosts
-- never expose the app publicly by default
-- sanitize form input
-- validate transaction amounts
-- escape transaction notes
-- minimize dependencies
-- do not execute user-provided content
-- keep update downloads authenticated/verified before installation
-
----
-
-# 16. Backup
-
-User data should be easy to locate and back up.
-
-Recommended production path:
-
-```text
-/var/lib/debtmonster/debtmonster.db
-```
-
-Provide:
-
-```text
-Download Backup
-Restore Backup
-Export CSV
-Export JSON
-```
-
-Before software update:
-
-```text
-automatic database backup
-```
-
----
-
-# 17. Tests
-Add and run meaningful unit and integration tests for the current tier before declaring it complete. Do not implement later-tier features solely to satisfy the full list below. At completion of the software tiers, run the full applicable regression suite and document any hardware or live-mailbox checks that remain unverified.
-
-
-Minimum tests:
-
-- starting debt
-- email check-in generation
-- email command parsing
-- `P 500` creates correct payment
-- `C 42.18` creates correct charge
-- `N` creates no transaction
-- malformed reply creates no transaction
-- duplicate inbound email is processed once
-- quoted reply/signature text does not corrupt parsing
-- payment lowers debt
-- charge increases debt
-- multiple commands separated by commas and newlines
-- multi-command replies commit all-or-nothing
-- `N` mixed with financial commands is rejected
-- separate replies to one check-in are accepted
-- deduplication persists across restarts
-- unexpected sender/unmatched check-in creates no transaction
-- scheduling across restart and daylight-saving changes
-- zero starting debt, debt growth, and overpayment/credit handling
-- display processes offsetting payment/charge events without replay after refresh
-- multiple transactions
-- edit recalculates
-- delete recalculates
-- debt-free state
-- savings deposit
-- savings withdrawal
-- backup/restore, including invalid-backup rejection
-- PC-to-Pi transfer preserves balances/history and leaves one active email processor
-- migration preserves transactions
-
----
-
-# 18. Development Rules for Coding Agents
-
-When building this application:
-
-1. Complete tiers in order.
-2. Treat email reply input as a core feature starting in Tier 0.
-3. Do not replace email reply input with a web-link-only workflow.
-4. Keep the manual web form as a fallback/admin path.
-5. Do not implement later tiers early.
-6. Prefer simple implementation.
-7. Keep dependencies minimal.
-8. Do not add features outside the scope.
-9. Keep all user financial data local.
-10. Never use floating-point values for money.
-11. Make the browser version work before Pi deployment.
-12. Test each tier before proceeding.
-
-If a design choice creates significant complexity, choose the simpler alternative.
-
-Avoid:
-
-- microservices
-- cloud infrastructure
-- OAuth
-- message queues
-- external databases
-- unnecessary frontend frameworks
-- premature custom hardware
-- premature SaaS architecture
-
----
-
-# 19. Recommended Coding-Agent Workflow
-
-The agent should work in this sequence:
-
-## Pass 1
-
-Build and test:
-
-```text
-Tier 0
-```
-
-Stop and verify.
-
-## Pass 2
-
-Build and test:
-
 ```text
-Tier 1
+P 500       payment of $500.00
+C 42.18     charge of $42.18
+N           no change
 ```
 
-Stop and verify.
-
-## Pass 3
-
-Build:
-
-```text
-Tier 2
-```
+Accept case-insensitive commands and surrounding whitespace. Multiple commands may be separated by newlines or commas, such as `C 42, P 200`. Commas separate commands, never digits: use `P 1200.00`, not `P 1,200` or `P 12,50`.
 
-User should review the visual experience before continuing.
+Amounts must be positive, at most two decimal places, and within a documented integer range. Reject zero, negative, non-finite, and ambiguous amounts instead of rounding. `N` must appear alone and creates no financial transaction.
 
-## Pass 4
+Extract only newly written reply text, handling common plain-text/HTML replies, quoted history, and signatures conservatively. Never discover commands inside quoted check-in examples or guess from prose. If extraction or any command is ambiguous, reject the entire reply. Process valid commands in written order, all or nothing.
 
-Build:
+Example daily email:
 
 ```text
-Tier 3
-```
-
-Validate the full Debt → $0 → Savings transition.
-
-## Pass 5
+Subject: Debt Monster Check-In [DM-<unique-id>]
 
-Build:
-
-```text
-Tier 4
+Any debt changes since your last update?
+Reply with P 500 (payment), C 42.18 (charge), or N (no change).
+Use only changes you have not already recorded.
 ```
 
-Only after the browser product is stable.
+### Correlation and duplicate prevention
 
-## Pass 6
+1. Persist each check-in's unique ID, outgoing Message-ID, recipient, local date, mode, and send state.
+2. Accept replies only from its configured recipient and correlated to a persisted check-in using reply headers or the check-in token. Ignore unmatched mail and unexpected senders without automatic responses.
+3. Give every inbound message a stable unique identity enforced by SQLite. Prefer Message-ID; define a fallback for missing IDs. Scope IMAP UIDs by account, mailbox, and UIDVALIDITY.
+4. In one database transaction, record all valid commands and the inbound processing outcome. Invalid replies record a rejection and no financial transactions. Link transactions to their inbound message.
+5. Send any success confirmation or concise correction request after commit. A send failure must never reapply transactions. Rejected messages must not trigger repeated error emails on every poll.
+6. Multiple distinct replies to one check-in are allowed. Redelivery is ignored, including after restart; identical command text in a different message is a new update.
 
-Add:
-
-```text
-Tier 5
-```
+Persist daily scheduling state with a unique date/recipient key so restarts or concurrent workers do not create a second daily check-in. Send once at the first valid local time at or after the scheduled time, including daylight-saving transitions. After downtime, send at most today's overdue check-in, never a backlog. Reuse the same outgoing identifier on retries. SMTP may deliver another copy after an uncertain send outcome; do not promise exactly-once delivery. Financial processing must remain idempotent.
 
-Only once a real physical device exists.
+Disabling email stops scheduled sending and reply polling without affecting manual use. Explicit testing remains available. Avoid storing entire mailbox messages unnecessarily.
 
-## Pass 7
+### Acceptance criteria
 
-Commercial polish:
+- Local setup, manual entry, history, and `/display` work; settings and balances survive restart.
+- With email enabled, a real test mailbox receives a check-in; `P 500`, `C 42.18`, and `N` produce the expected outcome and the display updates automatically.
+- Email can be configured and disabled without source edits; disabled email sends no scheduled check-ins and processes no replies.
+- Valid multi-command replies commit in order exactly once. Any invalid command or mixed `N` prevents the whole reply from changing money.
+- Quoted examples/signatures, malformed amounts, unexpected senders, and unmatched messages create no transactions.
+- Redelivery after restart is ignored; distinct replies to one check-in remain valid. Confirmation failures do not duplicate changes.
+- Scheduling tests cover restart, downtime, and daylight-saving changes. Connection failure is visible and manual operation continues.
+- Money tests cover zero starting debt, debt above its starting balance, and overpayment credit according to the rules below.
 
-```text
-Tier 6
-```
+**Stop here if email parsing, persistence, calculations, or duplicate prevention is unreliable.** No charts, animations, savings implementation, or Pi deployment is required yet.
 
-Only after the product has been used and shown to potential customers.
+## Tier 1 — Everyday experience
 
----
+### Goal
 
-# 20. Commercial Strategy
+Make the working browser application pleasant and useful every day.
 
-The software can remain free and local-first.
+### Required behavior
 
-Potential commercial product:
+- Simple responsive setup/settings and transaction forms; optional notes; edit/delete mistakes with immediate recalculation.
+- Current debt, net debt reduction, progress bar, percentage when applicable, and debt trend chart. Add a monthly net progress view.
+- Friendly monster, short payment/CHOMP animation (about 5–10 seconds), and milestone celebrations at 10%, 25%, 50%, 75%, and 90%. Tier 2 adds the full debt-free celebration.
+- A calm, readable display with optional rotation between balance, trend, monthly progress, and monster views. Neutral language when debt increases; no guilt or failure screens.
+- CSV export and a versioned JSON backup/restore for financial data and non-secret settings. Validate before replacement, back up existing data first, and require confirmation before replacing it. Configure mailbox secrets separately.
+- No elaborate asset pipeline: lightweight CSS/JavaScript animations are sufficient.
 
-```text
-Free software
-+
-preconfigured hardware
-+
-small display
-+
-attractive wooden enclosure
-+
-easy setup
-```
+Introduce a monotonically increasing display event cursor alongside status polling. Consume every new event in order, including offsetting payment/charge pairs. Use a bounded queue or combine payment bursts. Persist the display's consumed cursor so refresh/restart does not replay old celebrations. Initial startup shows current status without animating history. Corrections update totals without replaying payment celebrations. Persist milestone awards so ordinary polling does not retrigger them.
 
-The customer is primarily paying for:
+### Acceptance criteria
 
-- convenience
-- hardware integration
-- enclosure
-- presentation
-- setup
-- giftability
-- emotional experience
+- Editing/deleting a transaction updates balances, chart, and progress correctly.
+- Charts reflect actual chronological balances, including increases in debt; monthly net progress accounts for charges as well as payments.
+- Payment animations and milestones occur once, including multiple email commands and refresh/restart cases. Corrections do not celebrate the original transaction again.
+- Display is readable from several feet away; debt increases receive neutral treatment.
+- CSV matches the ledger. A backup restores identical balances/history; invalid backups leave existing data intact.
+- The app is useful daily on a computer with documented source-based setup.
 
-Do not assume a SaaS model is necessary.
+## Tier 2 — Debt-free transition and savings
 
-Whether we build the display or not the application should always be available for users
-to download and run locally on their computer.
+### Goal
 
+Keep using the same tool after debt payoff, with a separate savings ledger.
 
----
+### Required behavior
 
-# 21. Lean Validation Strategy
+- Celebrate a transition from positive derived debt to zero or below once per payoff event, never on every poll or page load. Start-at-zero shows a debt-free state without a spurious payoff animation.
+- Offer **Start Saving** or **Stay Here**. Switching is explicit, preserves debt history, and asks for a starting savings balance and optional positive savings goal.
+- Support starting directly in savings mode. Allow viewing retained debt history without resetting it.
+- Savings deposits, withdrawals, notes, corrections, trend chart, goal progress, and modest goal/milestone celebrations. Withdrawals receive neutral treatment.
+- Extend daily email and manual entry with `S 500` for a savings deposit, `W 100` for withdrawal, and `N`. Keep the same atomic parsing and duplicate-prevention rules.
+- Every check-in records its mode. After a mode switch, reject replies to old-mode check-ins with a correction request; never reinterpret debt commands as savings commands. New check-ins describe the current mode.
+- Backups include both ledgers, mode, starting balances, and savings goal.
 
-Before making a large investment:
+### Acceptance criteria
 
-1. Build Tier 0.
-2. Build Tier 1.
-3. Build Tier 2.
-4. Use it with real debt data.
-5. Build one Raspberry Pi prototype.
-6. Put it in a simple wooden enclosure.
-7. Record a short demonstration video.
-8. Show it to potential buyers.
-9. List a small number of units.
-10. Improve only based on real interest.
+- Paying off debt celebrates once; staying in debt mode or choosing savings works across restart.
+- Savings setup and mode changes preserve all debt history and do not silently turn credit into savings.
+- `S` increases savings, `W` decreases it, and `N` changes no money through both email and manual paths.
+- Wrong-mode commands and replies to old-mode check-ins change no balances.
+- Savings chart correctly shows deposits and withdrawals. Goal progress handles zero, negative, and above-goal balances without division errors.
+- Savings milestones do not replay on refresh. Backup/restore preserves both modes and their histories.
 
-Do not design custom PCBs or expensive tooling before validation.
+## Tier 3 — Pi appliance
 
----
+### Goal
 
-# 22. Product Positioning
+Run the proven browser application as my dedicated household display.
 
-Do not market as:
+### Required behavior
 
-```text
-Financial software
-Budgeting software
-Debt management software
-Financial planning software
-```
+- Use an available Raspberry Pi and compatible display; choose hardware based on actual kiosk performance. No custom electronics work.
+- Start the application and Chromium kiosk at boot, opening local `/display`; restart the application after failure.
+- Allow explicit local-network access for entry/settings from another household device. Optional mDNS name: `debtmonster.local`.
+- Local display, calculations, charts, animations, and manual entry work offline. Email requires internet and resumes safely after outages.
+- Document clean shutdown, data location, backup/restore, and the manual update procedure below.
+- Transfer a computer backup to the Pi with validation and confirmation. Set up credentials separately. Disable email processing on the computer before enabling it on the Pi; one active instance owns the mailbox. No ongoing synchronization.
 
-Better:
+Suggested separation:
 
 ```text
-Visual Debt Tracker
-Debt Payoff Display
-Savings Progress Display
-Debt & Savings Progress Display
+/opt/debtmonster/          application files
+/var/lib/debtmonster/     database, local config, backups
 ```
-
-Possible positioning:
 
-> Watch debt disappear. Then watch savings grow.
+Use an equivalent separate configurable data directory for computer use from Tier 0.
 
-or:
+### Acceptance criteria
 
-> Make financial progress visible.
+- A real Pi boots into `/display`, recovers after application restart, and retains data across reboot.
+- Normal display use needs no keyboard/mouse; another household device can submit updates on the configured LAN.
+- Offline manual use works; restoring internet resumes email without duplicate transactions or old daily check-in backlogs.
+- Computer-to-Pi transfer produces identical balances/history, with only the Pi processing email.
+- A manual update and, where applicable, migration preserve real test data; documented recovery restores the previous working version and its compatible backup.
 
----
+## Shared data and calculation rules
 
-# 23. Initial Demo Data
+Keep the schema small: settings; transactions; check-ins; inbound-message outcomes; and, when needed in Tier 1, display events/milestone state. Transactions need ID, effective date/time, type, integer amount_cents, optional note, mode, and optional inbound-message reference. Record processing timestamps separately from effective dates where needed. Use stable ordering for chart points and multiple commands in one reply.
 
-For development only:
+Calculate balances from starting amounts and the ledger; do not make stored current balances or percentages the source of truth.
 
 ```text
-Starting debt: $31,250
+Derived debt = starting debt + charges - payments
+Savings      = starting savings + deposits - withdrawals
+Net debt reduction = starting debt - derived debt
 ```
 
-Example history:
+- Starting balances are nonnegative integer cents. Savings goals, if set, are positive. Transaction amounts are positive integer cents. Corrections use edit/delete; a separate adjustment system is unnecessary for this build.
+- Preserve overpayments in the ledger: derived debt may be negative. Show remaining debt as $0 and the excess separately as credit. Never automatically transfer credit to savings.
+- Debt progress is net reduction / positive starting debt, clamped to 0–100% for the bar. Distinguish net reduction from total payments. Show debt growth neutrally and a 0% bar. With zero starting debt, omit percentage progress.
+- Savings progress is savings / positive goal, clamped to 0–100% for the bar. Omit percentage/bar without a goal. Preserve and display negative or above-goal balances.
+- Trend charts use actual ledger values; do not discard increases, withdrawals, or credits to make progress look smoother.
+- Use one configured currency; no exchange rates or multi-currency accounting.
 
-```text
-Payment     $500
-Charge       $42
-Payment   $1,200
-Payment     $350
-Charge       $67
-Payment     $800
-```
-
----
-
-# 24. Visual Style
+## Local operation and privacy
 
-Desired:
+The financial database and calculations stay on the active device. There is no Debt Monster cloud service, telemetry, or account requirement. Email providers necessarily transport and may retain command amounts and any enabled balance confirmations; keep message contents minimal.
 
-- warm
-- playful
-- polished
-- calm
-- modern
-- slightly whimsical
-- not childish
-- not corporate
+Bind to localhost by default. Enable LAN access explicitly and document that it trusts the household network. Do not expose the app publicly. Protect state-changing web requests against CSRF, reject unexpected origins/hosts, validate inputs, escape notes, and never execute email content. A login system is outside this personal build.
 
-The monster should feel lovable rather than aggressive.
+## Manual updates and data preservation
 
-Avoid:
+Sophisticated OTA updates are deferred. Do not build remote update checks, an in-app updater, automatic downloads, release servers, or automatic rollback infrastructure.
 
-- banking dashboards
-- stock-market visuals
-- dense tables
-- spreadsheet aesthetics
+Document this simple operator-run procedure for computer and Pi:
 
----
-
-# 25. Final Product Boundary
-
-Debt Monster should remain focused on:
-
-```text
-DEBT
-  ↓
-$0
-  ↓
-SAVINGS
-```
+1. Stop the app and its email worker so nothing writes during the update.
+2. Create a consistent SQLite backup and copy local configuration separately, protecting mailbox secrets. Record the current application version/revision.
+3. Update application files from a known repository revision or release; leave the data directory untouched. Install required dependencies using the documented environment.
+4. If the schema changed, apply a small numbered migration against the existing database after backup. Never recreate or overwrite the ledger during startup/update.
+5. Restart; verify balances/history, display, and email settings/worker status.
+6. If verification fails, stop the app and restore the previous code plus its compatible pre-update database/configuration backup before restarting. Explain that restoring a backup discards changes made after that backup; avoid new entries until verification succeeds.
 
-Do not turn it into a generic goal platform.
+Use SQLite's backup facility or stop all writers before copying the database; do not rely on copying only a live `.db` file while WAL writes may exist. Validate migrations with representative debt, savings, and email deduplication records. A manual update must preserve transaction history, settings, inbound identities, and display cursors.
 
-The first and most important success criterion remains:
+## Definition of success
 
-> A user receives the morning check-in email, replies `P 500`, and shortly afterward sees the Debt Monster display reflect a $500 reduction without opening the app.
+Tier 0 delivers the defining low-friction loop: **morning email → direct reply → accurate local record → updated display**. Subsequent tiers improve that same personal workflow, carry it into savings, and optionally move it onto the Pi. Keep each tier small enough to finish and use before adding the next.
