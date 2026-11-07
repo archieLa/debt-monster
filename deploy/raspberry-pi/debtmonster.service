@@ -1,0 +1,14 @@
+[Unit]
+Description=Debt Monster household server
+
+[Service]
+Type=simple
+WorkingDirectory=%h/debt-monster
+EnvironmentFile=%h/.config/debtmonster/server.env
+ExecStart=%h/debt-monster/.venv/bin/waitress-serve --host=0.0.0.0 --port=5050 --threads=4 --call debtmonster.web:create_app
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target
